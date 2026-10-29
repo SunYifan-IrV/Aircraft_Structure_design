@@ -1,0 +1,110 @@
+' =====================================================================
+' 02_结构件.CATScript  (CATIA V5, VBScript)
+' 在运行完 01（当前活动零件）后运行：
+'   1) 典型翼肋截面 = 右翼面与各翼肋基准面求交（供拉伸 3mm 成实体肋）
+'   2) 主梁/后梁站位线（30%/65% 弦）
+' 蒙皮建议用 Part Design「Thick Surface」手工完成（见 00_建模说明.md §6）。
+' =====================================================================
+Sub CATMain()
+    Dim part
+    Set part = CATIA.ActiveDocument.Part
+
+    Dim hsf, gs
+    Set hsf = part.HybridShapeFactory
+    Set gs = AddGS(part, "Structure")
+
+    Dim rootChord, tipChord, sparPos, rearPos
+    rootChord = ParamValue(part, "RootChord")
+    tipChord  = ParamValue(part, "TipChord")
+    sparPos   = ParamValue(part, "SparChordPos")
+    rearPos   = ParamValue(part, "RearSparChordPos")
+
+    Dim wingRight
+    Set wingRight = FindShape(part, "WingSurface", "WingRightLoft")
+    If wingRight Is Nothing Then
+        MsgBox "未找到 WingRightLoft，请先运行 01 脚本。"
+        Exit Sub
+    End If
+
+    ' ---- 1) 典型翼肋截面（右翼面与翼肋基准面求交）----
+    Dim skel, sh, inter
+    Set skel = FindBody(part, "Skeleton")
+    If Not skel Is Nothing Then
+        For Each sh In skel.HybridShapes
+            If Left(sh.Name, 4) = "Rib_" Then
+                Set inter = hsf.AddNewIntersection(part.CreateReferenceFromObject(wingRight), _
+                                                   part.CreateReferenceFromObject(sh))
+                inter.Name = sh.Name & "_airfoil"
+                gs.AppendHybridShape inter
+            End If
+        Next
+    End If
+
+    ' ---- 2) 主梁/后梁站位线（前缘无后掠，站位线为两点连线）----
+    Dim p1, p2, ln
+    Set p1 = hsf.AddNewPointCoord(sparPos * rootChord, 0.0, 0.0)
+    p1.Name = "SparRootPt" : gs.AppendHybridShape p1
+    Set p2 = hsf.AddNewPointCoord(sparPos * tipChord, 6500.0, 0.0)
+    p2.Name = "SparTipPt" : gs.AppendHybridShape p2
+    Set ln = hsf.AddNewLinePtPt(part.CreateReferenceFromObject(p1), part.CreateReferenceFromObject(p2))
+    ln.Name = "MainSparAxis" : gs.AppendHybridShape ln
+
+    Set p1 = hsf.AddNewPointCoord(rearPos * rootChord, 0.0, 0.0)
+    p1.Name = "RearSparRootPt" : gs.AppendHybridShape p1
+    Set p2 = hsf.AddNewPointCoord(rearPos * tipChord, 6500.0, 0.0)
+    p2.Name = "RearSparTipPt" : gs.AppendHybridShape p2
+    Set ln = hsf.AddNewLinePtPt(part.CreateReferenceFromObject(p1), part.CreateReferenceFromObject(p2))
+    ln.Name = "RearSparAxis" : gs.AppendHybridShape ln
+
+    part.Update
+
+    MsgBox "结构基准已生成：" & vbCrLf & _
+           "  - Structure/Rib_y*_airfoil (翼肋截面曲线)" & vbCrLf & _
+           "  - Structure/MainSparAxis, RearSparAxis (梁站位线)" & vbCrLf & _
+           "蒙皮请用 Part Design「Thick Surface」手工完成（见 00_建模说明.md §6）。"
+End Sub
+
+' ---------------------------------------------------------------------
+Function ParamValue(part, name)
+    Dim p
+    For Each p In part.Parameters
+        If p.Name = name Then
+            ParamValue = p.Value
+            Exit Function
+        End If
+    Next
+    ParamValue = 0.0
+End Function
+
+Function AddGS(part, name)
+    Dim gs
+    Set gs = part.HybridBodies.Add()
+    gs.Name = name
+    Set AddGS = gs
+End Function
+
+Function FindBody(part, name)
+    Dim hb
+    For Each hb In part.HybridBodies
+        If hb.Name = name Then
+            Set FindBody = hb
+            Exit Function
+        End If
+    Next
+    Set FindBody = Nothing
+End Function
+
+Function FindShape(part, bodyName, shapeName)
+    Dim hb, sh
+    For Each hb In part.HybridBodies
+        If hb.Name = bodyName Then
+            For Each sh In hb.HybridShapes
+                If sh.Name = shapeName Then
+                    Set FindShape = sh
+                    Exit Function
+                End If
+            Next
+        End If
+    Next
+    Set FindShape = Nothing
+End Function
