@@ -10,10 +10,26 @@
 '       台阶变截面与 01_Theory/04“缘条 8→6→4→2mm 台阶递减”一致。
 '       翼梁中心对齐翼型中厚线（30%弦处 mid=0.051c / 65%弦处 mid=0.0232c），
 '       以保证盒梁完全落在翼型内（见 scripts/verify_geometry.py 自检）。
+' 修复：偏置面先更新；拉伸按草图法向定向；左右蒙皮分体更新。
 ' =====================================================================
 Sub CATMain()
     Dim part
     Set part = CATIA.ActiveDocument.Part
+
+    ' Do not stack a second run on top of a partial/complete structure build.
+    Dim existingBody
+    For Each existingBody In part.Bodies
+        If existingBody.Name = "MainSpar" Or existingBody.Name = "RearSpar" Or _
+           existingBody.Name = "Ribs" Or existingBody.Name = "Skin" Or _
+           existingBody.Name = "SkinLeftBody" Then
+            Notify "当前零件已含结构件或上次失败的残留。请重新打开运行 02 前保存的 Part6.CATPart，再运行本宏。"
+            Exit Sub
+        End If
+    Next
+
+    ' Validate the data file before changing the model.
+    Dim dataFile
+    dataFile = AirfoilFile()
 
     ' ---- 补充参数（若 01 未建则新建；已存在则保留）----
     EnsureParam part, "RearSparDepthRoot", "LENGTH", 80.0
@@ -48,7 +64,7 @@ Sub CATMain()
     Set wingRight = FindShape(part, "WingSurface", "WingRightLoft")
     Set wingLeft  = FindShape(part, "WingSurface", "WingLeft")
     If wingRight Is Nothing Then
-        MsgBox "未找到 WingRightLoft，请先运行 01_骨架与机翼外形.CATScript。"
+        Notify "未找到 WingRightLoft，请先运行 01_骨架与机翼外形.CATScript。"
         Exit Sub
     End If
 
@@ -87,20 +103,24 @@ Sub CATMain()
     ' =================================================================
     ' 4) 蒙皮 Skin（右翼+左翼曲面加厚 2mm）
     ' =================================================================
-    Dim bodySkin
+    Dim bodySkin, bodySkinLeft
     Set bodySkin = NewBody(part, "Skin")
     part.InWorkObject = bodySkin
     Dim th1, th2
     Set th1 = part.ShapeFactory.AddNewThickSurface(RefOf(part, wingRight), 1, skinThk/2.0, skinThk/2.0)
     th1.Name = "SkinRight"
+    part.UpdateObject th1
     If Not wingLeft Is Nothing Then
+        ' Keep mirrored skins independent: their root seam cannot be fused reliably.
+        Set bodySkinLeft = NewBody(part, "SkinLeftBody")
         Set th2 = part.ShapeFactory.AddNewThickSurface(RefOf(part, wingLeft), 1, skinThk/2.0, skinThk/2.0)
         th2.Name = "SkinLeft"
+        part.UpdateObject th2
     End If
 
     part.Update
 
-    MsgBox "翼面结构件已生成：" & vbCrLf & _
+    Notify "翼面结构件已生成：" & vbCrLf & _
            "  MainSpar / RearSpar —— 空心盒梁（左右，台阶变截面）" & vbCrLf & _
            "  Ribs —— FX63-137 翼型截面板（15 肋/侧 x 左右）" & vbCrLf & _
            "  Skin —— 蒙皮（ThickSurface 2mm）" & vbCrLf & _
@@ -187,6 +207,7 @@ Sub AddRib(part, body, gs, name, y, ax, ay, n, rootChord, tipChord, halfSpan, di
     Set planeRef = PlaneAtY(part, gs, y)
 
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisZ sk, 0.0, y, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0
@@ -224,17 +245,17 @@ Sub AddRib(part, body, gs, name, y, ax, ay, n, rootChord, tipChord, halfSpan, di
     If prev <> n - 1 Then
         f2d.CreateLine px(prev), pz(prev), px(n - 1), pz(n - 1)
     End If
-    f2d.CreateLine px(n - 1), pz(n - 1), px(0), pz(0)
+    If Abs(px(n - 1) - px(0)) + Abs(pz(n - 1) - pz(0)) > 0.000001 Then
+        f2d.CreateLine px(n - 1), pz(n - 1), px(0), pz(0)
+    End If
     sk.CloseEdition
 
     part.InWorkObject = body
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, thk)
     pad.Name = name
-    If reverse Then
-        pad.FirstLimit.Length = 0.0
-        pad.SecondLimit.Length = thk
-    End If
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
@@ -246,6 +267,7 @@ Sub AddHollowBox(part, body, gs, name, planeY, xc, zc, w, d, wall, len, reverse)
     Set planeRef = PlaneAtY(part, gs, planeY)
 
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisZ sk, 0.0, planeY, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0
@@ -271,10 +293,8 @@ Sub AddHollowBox(part, body, gs, name, planeY, xc, zc, w, d, wall, len, reverse)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len)
     pad.Name = name
-    If reverse Then
-        pad.FirstLimit.Length = 0.0
-        pad.SecondLimit.Length = len
-    End If
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
@@ -304,6 +324,8 @@ Function PlaneAtY(part, gs, y)
     Set po = hsf.AddNewPlaneOffset(refZX, y, False)
     po.Name = "Plane_y" & CStr(CLng(y))
     gs.AppendHybridShape po
+    ' CATIA V5 requires a computed support before Sketches.Add.
+    part.UpdateObject po
     Set PlaneAtY = part.CreateReferenceFromObject(po)
 End Function
 
@@ -317,11 +339,10 @@ Sub SetAxisZ(sk, ox, oy, oz, hx, hy, hz, vx, vy, vz)
 End Sub
 
 Sub ReadAirfoil(ax, ay, n)
-    Dim fso, ts, line, arr, cnt, DATA_DIR
+    Dim fso, ts, line, arr, cnt
     ReDim ax(500) : ReDim ay(500)     ' 定长数组（FX63-137 共 96 点，500 足够）
-    DATA_DIR = "D:\Document\University\Personal_aircraft\02_CATIA\airfoil\"
     Set fso = CreateObject("Scripting.FileSystemObject")
-    Set ts = fso.OpenTextFile(DATA_DIR & "fx63137_loop.csv", 1)
+    Set ts = fso.OpenTextFile(AirfoilFile(), 1)
     ts.ReadLine
     cnt = 0
     Do While Not ts.AtEndOfStream
@@ -345,7 +366,7 @@ Function ParamValue(part, name)
             Exit Function
         End If
     Next
-    ParamValue = 0.0
+    Err.Raise 515, "ParamValue", "缺少必要参数：" & name & "。请先运行前序宏。"
 End Function
 
 Sub EnsureParam(part, name, kind, val)
@@ -397,3 +418,47 @@ End Function
 Function RefOf(part, obj)
     Set RefOf = part.CreateReferenceFromObject(obj)
 End Function
+
+' Resolve airfoil data relative to the saved CATPart, not another PC's path.
+Function AirfoilFile()
+    Dim fs, folder, candidate, i
+    Set fs = CreateObject("Scripting.FileSystemObject")
+    folder = CATIA.ActiveDocument.Path
+    For i = 0 To 2
+        If Len(folder) > 0 Then
+            candidate = fs.BuildPath(folder, "airfoil\fx63137_loop.csv")
+            If fs.FileExists(candidate) Then
+                AirfoilFile = candidate
+                Exit Function
+            End If
+            folder = fs.GetParentFolderName(folder)
+        End If
+    Next
+    candidate = "D:\Aircraft_Structure_design-main\02_CATIA\airfoil\fx63137_loop.csv"
+    If fs.FileExists(candidate) Then
+        AirfoilFile = candidate
+        Exit Function
+    End If
+    Err.Raise 513, "AirfoilFile", "未找到 airfoil\fx63137_loop.csv，请先将零件保存在本项目的 02_CATIA 或其 CATIA 子目录。"
+End Function
+
+' Check sequence and refuse duplicate/partial builds before modifying the part.
+Sub RequireReady(part, requiredNames, newNames)
+    Dim name, b, found
+    For Each name In requiredNames
+        found = False
+        For Each b In part.Bodies
+            If b.Name = name And b.Shapes.Count > 0 Then found = True
+        Next
+        If Not found Then Err.Raise 513, "RequireReady", "缺少前序结构：" & name & "。请按 01 至 06 顺序运行。"
+    Next
+    For Each name In newNames
+        For Each b In part.Bodies
+            If b.Name = name Then Err.Raise 514, "RequireReady", "已存在结构或失败残留：" & name & "。请恢复运行本步骤前的模型再重试。"
+        Next
+    Next
+End Sub
+
+Sub Notify(message)
+    MsgBox message
+End Sub

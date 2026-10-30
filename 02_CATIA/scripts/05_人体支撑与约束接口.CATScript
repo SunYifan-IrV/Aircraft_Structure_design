@@ -9,6 +9,7 @@
 Sub CATMain()
     Dim part
     Set part = CATIA.ActiveDocument.Part
+    RequireReady part, Array("Pylon", "Motor", "Propeller", "Battery", "ESC"), Array("Cradle", "Harness")
 
     EnsureParam part, "CradleLen", "LENGTH", 1000.0
     EnsureParam part, "CradleWid", "LENGTH", 400.0
@@ -46,7 +47,7 @@ Sub CATMain()
     AddBox part, bodyHarn, gs, "StrapRR", "Z", cradleZ, 675.0, -102.5, 725.0, -97.5, hangZ - cradleZ, False
 
     ' 挂点吊杆（龙骨 z=-250 到耳环 z=-350，φ12 竖杆，沿 Z）
-    AddCylinder part, bodyHarn, gs, "HangLink", "Z", -250.0, hangX, 0.0, 6.0, 0.0, 100.0, False
+    AddCylinder part, bodyHarn, gs, "HangLink", "Z", -250.0, hangX, 0.0, 6.0, 0.0, 100.0, True
     ' 挂点耳环（φ20 沿 X，长 30，位于 (500,0,-350)）
     AddCylinder part, bodyHarn, gs, "HangRing", "X", hangX - 15.0, 0.0, hangZ, 10.0, 0.0, 30.0, False
 
@@ -68,7 +69,7 @@ Sub CATMain()
 
     part.Update
 
-    MsgBox "人体支撑与约束接口已生成：" & vbCrLf & _
+    Notify "人体支撑与约束接口已生成：" & vbCrLf & _
            "  Cradle —— 躯干托板 1000x400x10" & vbCrLf & _
            "  Harness —— 4 根挂带 + 挂点吊杆 + 挂点耳环" & vbCrLf & _
            "  Constraints —— HangPoint / LegTouchL,R / PropThrust" & vbCrLf & _
@@ -82,6 +83,7 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -94,13 +96,15 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 Sub AddBox(part, body, gs, name, key, off, u1, v1, u2, v2, len1, reverse)
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -115,11 +119,13 @@ Sub AddBox(part, body, gs, name, key, off, u1, v1, u2, v2, len1, reverse)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 Function PlaneOffset(part, gs, key, off)
-    Static cnt
+    Dim cnt
+    cnt = gs.HybridShapes.Count
     Dim hsf, refBase, po
     cnt = cnt + 1
     Set hsf = part.HybridShapeFactory
@@ -133,6 +139,7 @@ Function PlaneOffset(part, gs, key, off)
     Set po = hsf.AddNewPlaneOffset(refBase, off, False)
     po.Name = "Plane_" & key & "_" & cnt
     gs.AppendHybridShape po
+    part.UpdateObject po
     Set PlaneOffset = part.CreateReferenceFromObject(po)
 End Function
 
@@ -162,7 +169,7 @@ Function ParamValue(part, name)
             Exit Function
         End If
     Next
-    ParamValue = 0.0
+    Err.Raise 515, "ParamValue", "缺少必要参数：" & name & "。请先运行前序宏。"
 End Function
 
 Sub EnsureParam(part, name, kind, val)
@@ -195,3 +202,24 @@ Function NewBody(part, name)
     part.InWorkObject = b
     Set NewBody = b
 End Function
+
+' Check sequence and refuse duplicate/partial builds before modifying the part.
+Sub RequireReady(part, requiredNames, newNames)
+    Dim name, b, found
+    For Each name In requiredNames
+        found = False
+        For Each b In part.Bodies
+            If b.Name = name And b.Shapes.Count > 0 Then found = True
+        Next
+        If Not found Then Err.Raise 513, "RequireReady", "缺少前序结构：" & name & "。请按 01 至 06 顺序运行。"
+    Next
+    For Each name In newNames
+        For Each b In part.Bodies
+            If b.Name = name Then Err.Raise 514, "RequireReady", "已存在结构或失败残留：" & name & "。请恢复运行本步骤前的模型再重试。"
+        Next
+    Next
+End Sub
+
+Sub Notify(message)
+    MsgBox message
+End Sub

@@ -10,6 +10,7 @@
 Sub CATMain()
     Dim part
     Set part = CATIA.ActiveDocument.Part
+    RequireReady part, Array("MainSpar", "RearSpar", "Ribs", "Skin", "SkinLeftBody"), Array("CentralBox", "Keel", "KeelStrut", "RootHinge", "RootHingePins")
 
     EnsureParam part, "CentralBoxSpan",  "LENGTH", 1600.0
     EnsureParam part, "CentralBoxWidth", "LENGTH", 160.0
@@ -69,8 +70,9 @@ Sub CATMain()
     ' =================================================================
     ' 4) 翼根折叠铰（每侧 3 处）
     ' =================================================================
-    Dim bodyHinge
+    Dim bodyHinge, bodyPins
     Set bodyHinge = NewBody(part, "RootHinge")
+    Set bodyPins = NewBody(part, "RootHingePins")
 
     Dim hy, c800, xM, zMup, zMlo, xR, zR, zd
     hy = ParamValue(part, "HingeY")
@@ -83,17 +85,17 @@ Sub CATMain()
     zR   = rearCam * c800 + zd
 
     ' 右侧 y=+800
-    AddHinge part, bodyHinge, gs, "MainUpper_R", hy, xM, zMup, False
-    AddHinge part, bodyHinge, gs, "MainLower_R", hy, xM, zMlo, False
-    AddHinge part, bodyHinge, gs, "Rear_R",     hy, xR, zR,   False
+    AddHinge part, bodyHinge, bodyPins, gs, "MainUpper_R", hy, xM, zMup, False
+    AddHinge part, bodyHinge, bodyPins, gs, "MainLower_R", hy, xM, zMlo, False
+    AddHinge part, bodyHinge, bodyPins, gs, "Rear_R",     hy, xR, zR,   False
     ' 左侧 y=-800
-    AddHinge part, bodyHinge, gs, "MainUpper_L", hy, xM, zMup, True
-    AddHinge part, bodyHinge, gs, "MainLower_L", hy, xM, zMlo, True
-    AddHinge part, bodyHinge, gs, "Rear_L",     hy, xR, zR,   True
+    AddHinge part, bodyHinge, bodyPins, gs, "MainUpper_L", hy, xM, zMup, True
+    AddHinge part, bodyHinge, bodyPins, gs, "MainLower_L", hy, xM, zMlo, True
+    AddHinge part, bodyHinge, bodyPins, gs, "Rear_L",     hy, xR, zR,   True
 
     part.Update
 
-    MsgBox "中央承力框架与连接件已生成：" & vbCrLf & _
+    Notify "中央承力框架与连接件已生成：" & vbCrLf & _
            "  CentralBox —— 中央承力盒（y=±800）" & vbCrLf & _
            "  Keel / KeelStrut —— 龙骨 + 竖支杆" & vbCrLf & _
            "  RootHinge —— 翼根折叠铰（主梁上/下 + 后梁，每侧 3 处）" & vbCrLf & _
@@ -104,7 +106,7 @@ End Sub
 ' 折叠铰：铰耳(带销孔板) + 钢销。hingeY 为折叠站(正 y)，reverse=左半翼
 ' 铰耳位于翼外侧(y>hingeY)，销穿过铰耳并伸入中央盒区
 ' ---------------------------------------------------------------------
-Sub AddHinge(part, body, gs, name, hingeY, xc, zc, reverse)
+Sub AddHinge(part, body, pins, gs, name, hingeY, xc, zc, reverse)
     Dim sgn, lugY, pinY, pinLen
     If reverse Then sgn = -1.0 Else sgn = 1.0
     lugY   = sgn * (hingeY + 6.0)      ' 耳片中心在折叠站外侧 6mm
@@ -112,7 +114,7 @@ Sub AddHinge(part, body, gs, name, hingeY, xc, zc, reverse)
     pinLen = 28.0                       ' 销长 28mm，穿过耳片+盒壁
 
     AddLug  part, body, gs, name & "_lug", lugY, xc, zc, 60.0, 40.0, 8.0, reverse, 12.0
-    AddPin  part, body, gs, name & "_pin", pinY, xc, zc, 12.0, pinLen, reverse
+    AddPin  part, pins, gs, name & "_pin", pinY, xc, zc, 12.0, pinLen, reverse
 End Sub
 
 ' 铰耳：矩形板 + 销孔，平面在常 Y 面，沿 Y Pad thick
@@ -123,6 +125,7 @@ Sub AddLug(part, body, gs, name, yC, xc, zc, w, h, thick, reverse, holeDia)
     Set planeRef = PlaneOffset(part, gs, "Y", ySketch)
 
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, "Y", ySketch
@@ -140,17 +143,19 @@ Sub AddLug(part, body, gs, name, yC, xc, zc, w, h, thick, reverse, holeDia)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, thick)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = thick
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' 钢销：实心圆柱，沿 Y
 Sub AddPin(part, body, gs, name, yC, xc, zc, dia, len, reverse)
     Dim ySketch
-    If reverse Then ySketch = yC + len / 2.0 Else ySketch = yC - len / 2.0
+    ySketch = yC   ' pinY is the starting station, not the center
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, "Y", ySketch)
 
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, "Y", ySketch
@@ -163,7 +168,8 @@ Sub AddPin(part, body, gs, name, yC, xc, zc, dia, len, reverse)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
@@ -173,6 +179,7 @@ Sub AddHollowBoxSym(part, body, gs, name, planeY, xc, zc, w, d, wall, halfLen)
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, "Y", planeY)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, "Y", planeY
@@ -197,7 +204,8 @@ Sub AddHollowBoxSym(part, body, gs, name, planeY, xc, zc, w, d, wall, halfLen)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, halfLen)
     pad.Name = name
-    pad.SecondLimit.Length = halfLen
+    pad.IsSymmetric = True
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
@@ -208,6 +216,7 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -220,7 +229,8 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
@@ -239,7 +249,8 @@ Function Rad(deg)
 End Function
 
 Function PlaneOffset(part, gs, key, off)
-    Static cnt
+    Dim cnt
+    cnt = gs.HybridShapes.Count
     Dim hsf, refBase, po
     cnt = cnt + 1
     Set hsf = part.HybridShapeFactory
@@ -253,6 +264,7 @@ Function PlaneOffset(part, gs, key, off)
     Set po = hsf.AddNewPlaneOffset(refBase, off, False)
     po.Name = "Plane_" & key & "_" & cnt
     gs.AppendHybridShape po
+    part.UpdateObject po
     Set PlaneOffset = part.CreateReferenceFromObject(po)
 End Function
 
@@ -282,7 +294,7 @@ Function ParamValue(part, name)
             Exit Function
         End If
     Next
-    ParamValue = 0.0
+    Err.Raise 515, "ParamValue", "缺少必要参数：" & name & "。请先运行前序宏。"
 End Function
 
 Sub EnsureParam(part, name, kind, val)
@@ -315,3 +327,24 @@ Function NewBody(part, name)
     part.InWorkObject = b
     Set NewBody = b
 End Function
+
+' Check sequence and refuse duplicate/partial builds before modifying the part.
+Sub RequireReady(part, requiredNames, newNames)
+    Dim name, b, found
+    For Each name In requiredNames
+        found = False
+        For Each b In part.Bodies
+            If b.Name = name And b.Shapes.Count > 0 Then found = True
+        Next
+        If Not found Then Err.Raise 513, "RequireReady", "缺少前序结构：" & name & "。请按 01 至 06 顺序运行。"
+    Next
+    For Each name In newNames
+        For Each b In part.Bodies
+            If b.Name = name Then Err.Raise 514, "RequireReady", "已存在结构或失败残留：" & name & "。请恢复运行本步骤前的模型再重试。"
+        Next
+    Next
+End Sub
+
+Sub Notify(message)
+    MsgBox message
+End Sub

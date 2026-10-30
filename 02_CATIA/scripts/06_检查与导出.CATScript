@@ -1,53 +1,77 @@
-' =====================================================================
-' 06_检查与导出.CATScript  (CATIA V5, VBScript)
-' 在运行完 01~05（整机建模完成）后运行：
-'   1) 检查各 Body / 几何图形集是否齐全
-'   2) 保存 CATPart
-'   3) 导出 STEP（供 03_FEA 导入）
-'
-' 质量属性（材料密度 + Measure Inertia）建议手工完成，见脚本末尾提示与
-' 《建模说明.md》§9。材料按 Body 赋密度：
-'   CFRP 1550 / 7075-T6 铝 2810 / 芳纶 1440 / 钢 7850 kg/m^3
-' =====================================================================
+' 06: Validate the complete model, then save CATPart and STEP without overwriting inputs.
 Sub CATMain()
-    Dim OUT_DIR
-    OUT_DIR = "D:\Document\University\Personal_aircraft\02_CATIA\"
-
-    Dim partDoc, part
-    Set partDoc = CATIA.ActiveDocument
-    Set part = partDoc.Part
-
-    ' ---- 1) 检查 Body ----
-    Dim expected(9)
-    expected(0) = "MainSpar" : expected(1) = "RearSpar" : expected(2) = "Ribs"
-    expected(3) = "Skin"     : expected(4) = "CentralBox" : expected(5) = "Keel"
-    expected(6) = "RootHinge": expected(7) = "Pylon"      : expected(8) = "Motor"
-    expected(9) = "Propeller"
-
-    Dim bodyList, b, i, ok
-    bodyList = ""
-    For i = 0 To 9
-        ok = False
+    Dim doc, part, expected, name, b, found, feature, gs, hb, j
+    Set doc = CATIA.ActiveDocument
+    Set part = doc.Part
+    expected = Array("MainSpar", "RearSpar", "Ribs", "Skin", "SkinLeftBody", _
+                     "CentralBox", "Keel", "KeelStrut", "RootHinge", "RootHingePins", _
+                     "Pylon", "Motor", "Propeller", "Battery", "ESC", "Cradle", "Harness")
+    For Each name In expected
+        found = False
         For Each b In part.Bodies
-            If b.Name = expected(i) Then ok = True
+            If b.Name = name And b.Shapes.Count > 0 Then found = True
         Next
-        If ok Then bodyList = bodyList & "  [OK] " & expected(i) & vbCrLf _
-                     Else bodyList = bodyList & "  [--] " & expected(i) & vbCrLf
+        If Not found Then Err.Raise 601, "ModelCheck", "缺少实体结构：" & name & "。请先完成 01 至 05。"
+    Next
+    For Each name In Array("Skeleton", "WingSurface", "Construction", "CentralFrame_Ref", "PowerUnit_Ref", "HumanSupport_Ref", "Constraints")
+        found = False
+        For Each hb In part.HybridBodies
+            If hb.Name = name Then found = True
+        Next
+        If Not found Then Err.Raise 602, "ModelCheck", "缺少几何图形集：" & name
+    Next
+    Set gs = part.HybridBodies.Item("Constraints")
+    For Each name In Array("HangPoint", "LegTouchL", "LegTouchR", "PropThrust")
+        Set feature = gs.HybridShapes.Item(name)
+        part.UpdateObject feature
+    Next
+    part.Update
+    For Each b In part.Bodies
+        For j = 1 To b.Shapes.Count
+            Set feature = b.Shapes.Item(j)
+            If Not part.IsUpToDate(feature) Then Err.Raise 603, "ModelCheck", "特征尚未更新：" & feature.Name
+        Next
     Next
 
-    ' ---- 2) 保存 + 导出 ----
-    partDoc.SaveAs OUT_DIR & "Aircraft_Structure.CATPart"
-    partDoc.ExportData OUT_DIR & "Aircraft_Structure.stp", "stp"
+    ' Hide reference geometry so STEP contains the modeled components.
+    Dim selection
+    Set selection = doc.Selection
+    selection.Clear
+    For Each hb In part.HybridBodies
+        selection.Add hb
+    Next
+    selection.VisProperties.SetShow 1
+    selection.Clear
 
-    MsgBox "整机建模检查与导出完成：" & vbCrLf & vbCrLf & _
-           "Body 检查：" & vbCrLf & bodyList & vbCrLf & _
-           "已导出：" & vbCrLf & _
-           "  " & OUT_DIR & "Aircraft_Structure.CATPart" & vbCrLf & _
-           "  " & OUT_DIR & "Aircraft_Structure.stp" & vbCrLf & vbCrLf & _
-           "质量属性（手工）：" & vbCrLf & _
-           "  1. 菜单 工具 > 材料 > 应用材料，按 Body 赋密度：" & vbCrLf & _
-           "     翼梁/翼肋/蒙皮/中央盒/托板/桨 = CFRP 1550" & vbCrLf & _
-           "     铰耳/销/龙骨/塔架 = 7075-T6 铝 2810（销用钢 7850）" & vbCrLf & _
-           "     挂带 = 芳纶 1440" & vbCrLf & _
-           "  2. 测量 > 惯性 (Measure Inertia) 检查整机质量（见建模说明 §9）。"
+    Dim fs, outDir, stem, base, i, catFile, stepFile
+    Set fs = CreateObject("Scripting.FileSystemObject")
+    outDir = "D:\Aircraft_Structure_design-main\02_CATIA\generated"
+    If Not fs.FolderExists(outDir) Then fs.CreateFolder outDir
+    stem = "Aircraft_Structure_" & TimeStamp()
+    base = stem
+    i = 0
+    Do While fs.FileExists(fs.BuildPath(outDir, base & ".CATPart")) Or fs.FileExists(fs.BuildPath(outDir, base & ".stp"))
+        i = i + 1
+        base = stem & "_" & CStr(i)
+    Loop
+    catFile = fs.BuildPath(outDir, base & ".CATPart")
+    stepFile = fs.BuildPath(outDir, base & ".stp")
+    doc.SaveAs catFile
+    doc.ExportData stepFile, "stp"
+    If Not fs.FileExists(catFile) Or Not fs.FileExists(stepFile) Then Err.Raise 604, "Export", "未生成 CATPart 或 STEP 文件。"
+    If fs.GetFile(catFile).Size = 0 Or fs.GetFile(stepFile).Size = 0 Then Err.Raise 605, "Export", "导出文件为空。"
+    Notify "整机检查通过：17 个结构 Body、7 个几何图形集、4 个约束点，全部实体特征更新正常。" & vbCrLf & _
+           "已保存 CATPart：" & catFile & vbCrLf & "已导出 STEP：" & stepFile & vbCrLf & _
+           "质量属性需赋予正确材料后再测量，本宏未进行材料赋值或质量校核。"
+End Sub
+
+Function TimeStamp()
+    Dim t
+    t = Now
+    TimeStamp = Year(t) & Right("0" & Month(t), 2) & Right("0" & Day(t), 2) & "_" & _
+                Right("0" & Hour(t), 2) & Right("0" & Minute(t), 2) & Right("0" & Second(t), 2)
+End Function
+
+Sub Notify(message)
+    MsgBox message
 End Sub

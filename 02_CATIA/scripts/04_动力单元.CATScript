@@ -13,6 +13,7 @@
 Sub CATMain()
     Dim part
     Set part = CATIA.ActiveDocument.Part
+    RequireReady part, Array("CentralBox", "Keel", "KeelStrut", "RootHinge", "RootHingePins"), Array("Pylon", "Motor", "Propeller", "Battery", "ESC")
 
     EnsureParam part, "MotorDiameter", "LENGTH", 140.0
     EnsureParam part, "MotorLength",   "LENGTH", 80.0
@@ -68,7 +69,7 @@ Sub CATMain()
 
     Dim rTip, rRoot
     rTip  = propD / 2.0          ' 750
-    rRoot = 20.0                 ' 毂半径
+    rRoot = 18.0                 ' 根部伸入半径20的桨毂2mm，避免仅线接触
     Dim bu(3), bv(3)
     ' 上桨叶：根 y=±PropChord/2, 梢 y=±PropChord/4
     bu(0) = -propC / 2.0 : bv(0) = motorZ + rRoot
@@ -104,7 +105,7 @@ Sub CATMain()
 
     part.Update
 
-    MsgBox "动力单元已生成：" & vbCrLf & _
+    Notify "动力单元已生成：" & vbCrLf & _
            "  Pylon —— 门式管架（2 竖管 + 横梁）" & vbCrLf & _
            "  Motor —— 5kW 电机（φ" & CStr(CLng(motorD)) & " x " & CStr(CLng(motorL)) & "）" & vbCrLf & _
            "  Propeller —— 折叠桨 Ø" & CStr(CLng(propD)) & "（2 片梯形桨叶）" & vbCrLf & _
@@ -121,6 +122,7 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -133,7 +135,8 @@ Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' 通用：矩形盒（在 key 法向偏置 off 的平面上画矩形，沿法向 Pad）
@@ -141,6 +144,7 @@ Sub AddBox(part, body, gs, name, key, off, u1, v1, u2, v2, len1, reverse)
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -155,7 +159,8 @@ Sub AddBox(part, body, gs, name, key, off, u1, v1, u2, v2, len1, reverse)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' 通用：闭合多边形（uu()/vv() 为草图坐标）Pad
@@ -163,6 +168,7 @@ Sub AddPolygonPad(part, body, gs, name, key, off, uu, vv, np, len1, reverse)
     Dim planeRef
     Set planeRef = PlaneOffset(part, gs, key, off)
     Dim sk
+    part.InWorkObject = body
     Set sk = body.Sketches.Add(planeRef)
     sk.Name = name & "_sk"
     SetAxisKey sk, key, off
@@ -177,14 +183,16 @@ Sub AddPolygonPad(part, body, gs, name, key, off, uu, vv, np, len1, reverse)
     Dim pad
     Set pad = part.ShapeFactory.AddNewPad(sk, len1)
     pad.Name = name
-    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+    If (key = "Y" And Not reverse) Or (key <> "Y" And reverse) Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
 End Sub
 
 ' ---------------------------------------------------------------------
 ' 基准面偏移：key "X"/"Y"/"Z" 沿对应轴偏移 off
 ' ---------------------------------------------------------------------
 Function PlaneOffset(part, gs, key, off)
-    Static cnt
+    Dim cnt
+    cnt = gs.HybridShapes.Count
     Dim hsf, refBase, po
     cnt = cnt + 1
     Set hsf = part.HybridShapeFactory
@@ -198,6 +206,7 @@ Function PlaneOffset(part, gs, key, off)
     Set po = hsf.AddNewPlaneOffset(refBase, off, False)
     po.Name = "Plane_" & key & "_" & cnt
     gs.AppendHybridShape po
+    part.UpdateObject po
     Set PlaneOffset = part.CreateReferenceFromObject(po)
 End Function
 
@@ -228,7 +237,7 @@ Function ParamValue(part, name)
             Exit Function
         End If
     Next
-    ParamValue = 0.0
+    Err.Raise 515, "ParamValue", "缺少必要参数：" & name & "。请先运行前序宏。"
 End Function
 
 Sub EnsureParam(part, name, kind, val)
@@ -261,3 +270,24 @@ Function NewBody(part, name)
     part.InWorkObject = b
     Set NewBody = b
 End Function
+
+' Check sequence and refuse duplicate/partial builds before modifying the part.
+Sub RequireReady(part, requiredNames, newNames)
+    Dim name, b, found
+    For Each name In requiredNames
+        found = False
+        For Each b In part.Bodies
+            If b.Name = name And b.Shapes.Count > 0 Then found = True
+        Next
+        If Not found Then Err.Raise 513, "RequireReady", "缺少前序结构：" & name & "。请按 01 至 06 顺序运行。"
+    Next
+    For Each name In newNames
+        For Each b In part.Bodies
+            If b.Name = name Then Err.Raise 514, "RequireReady", "已存在结构或失败残留：" & name & "。请恢复运行本步骤前的模型再重试。"
+        Next
+    Next
+End Sub
+
+Sub Notify(message)
+    MsgBox message
+End Sub
