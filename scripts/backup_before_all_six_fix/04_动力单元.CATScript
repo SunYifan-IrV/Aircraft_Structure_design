@@ -1,0 +1,263 @@
+' =====================================================================
+' 04_动力单元.CATScript  (CATIA V5, VBScript)
+' 在运行完 01、02、03 后运行（活动零件已有翼面结构 + 中央框架）：
+'   1) 螺旋桨塔 Pylon —— 门式管架：2 竖管 + 1 横梁（铝 φ20x2）
+'   2) 电机 Motor —— 5kW 无刷电机，φ140 x 80（沿 X 推力轴）
+'   3) 折叠桨 Propeller —— 桨毂 φ40 + 2 片梯形桨叶（Ø1500，折叠式）
+'   4) 电池组 Battery —— 3.0kWh/48V 锂电箱 500x240x100
+'   5) 电调 ESC —— 控制器小箱 150x100x40
+'
+' 坐标：电机中心 (1350, 0, 200)，桨盘在电机后方 x≈1440（后置推进）。
+' 推力方向沿 +X（向后），桨叶在 YZ 平面内绕 X 旋转。
+' =====================================================================
+Sub CATMain()
+    Dim part
+    Set part = CATIA.ActiveDocument.Part
+
+    EnsureParam part, "MotorDiameter", "LENGTH", 140.0
+    EnsureParam part, "MotorLength",   "LENGTH", 80.0
+    EnsureParam part, "PropDiameter",  "LENGTH", 1500.0
+    EnsureParam part, "PropChord",     "LENGTH", 120.0
+    EnsureParam part, "PropThickness", "LENGTH", 8.0
+    EnsureParam part, "BatteryLen",    "LENGTH", 500.0
+    EnsureParam part, "BatteryWid",    "LENGTH", 240.0
+    EnsureParam part, "BatteryHgt",    "LENGTH", 100.0
+
+    Dim wall
+    wall = ParamValue(part, "WallThickness")
+
+    Dim gs
+    Set gs = AddGS(part, "PowerUnit_Ref")
+
+    Dim motorD, motorL, propD, propC, propT
+    motorD = ParamValue(part, "MotorDiameter")
+    motorL = ParamValue(part, "MotorLength")
+    propD  = ParamValue(part, "PropDiameter")
+    propC  = ParamValue(part, "PropChord")
+    propT  = ParamValue(part, "PropThickness")
+
+    ' ---- 关键位置 ----
+    Dim motorX, motorZ
+    motorX = 1350.0
+    motorZ = 200.0
+    Dim propX
+    propX = motorX + motorL / 2.0 + 50.0     ' 桨盘 x≈1440
+
+    ' =================================================================
+    ' 1) 螺旋桨塔 Pylon（门式：2 竖管 z=-250..130 + 横梁 y=-130..130,z=130）
+    ' =================================================================
+    Dim bodyPyl
+    Set bodyPyl = NewBody(part, "Pylon")
+    AddCylinder part, bodyPyl, gs, "PylonTubeL", "Z", -250.0, motorX,  130.0, 10.0, 8.0, 380.0, False
+    AddCylinder part, bodyPyl, gs, "PylonTubeR", "Z", -250.0, motorX, -130.0, 10.0, 8.0, 380.0, False
+    AddCylinder part, bodyPyl, gs, "PylonBeam",  "Y", -130.0, motorX,  130.0, 10.0, 8.0, 260.0, False
+
+    ' =================================================================
+    ' 2) 电机 Motor（沿 X 的实心圆柱）
+    ' =================================================================
+    Dim bodyMot
+    Set bodyMot = NewBody(part, "Motor")
+    AddCylinder part, bodyMot, gs, "Motor", "X", motorX - motorL / 2.0, 0.0, motorZ, motorD / 2.0, 0.0, motorL, False
+
+    ' =================================================================
+    ' 3) 折叠桨 Propeller（毂 + 2 片梯形桨叶）
+    ' =================================================================
+    Dim bodyProp
+    Set bodyProp = NewBody(part, "Propeller")
+    AddCylinder part, bodyProp, gs, "Hub", "X", propX - 20.0, 0.0, motorZ, 20.0, 0.0, 40.0, False
+
+    Dim rTip, rRoot
+    rTip  = propD / 2.0          ' 750
+    rRoot = 20.0                 ' 毂半径
+    Dim bu(3), bv(3)
+    ' 上桨叶：根 y=±PropChord/2, 梢 y=±PropChord/4
+    bu(0) = -propC / 2.0 : bv(0) = motorZ + rRoot
+    bu(1) =  propC / 2.0 : bv(1) = motorZ + rRoot
+    bu(2) =  propC / 4.0 : bv(2) = motorZ + rTip
+    bu(3) = -propC / 4.0 : bv(3) = motorZ + rTip
+    AddPolygonPad part, bodyProp, gs, "BladeUp", "X", propX - propT / 2.0, bu, bv, 4, propT, False
+    ' 下桨叶
+    bu(0) = -propC / 2.0 : bv(0) = motorZ - rRoot
+    bu(1) =  propC / 2.0 : bv(1) = motorZ - rRoot
+    bu(2) =  propC / 4.0 : bv(2) = motorZ - rTip
+    bu(3) = -propC / 4.0 : bv(3) = motorZ - rTip
+    AddPolygonPad part, bodyProp, gs, "BladeDn", "X", propX - propT / 2.0, bu, bv, 4, propT, False
+
+    ' =================================================================
+    ' 4) 电池组 Battery（箱 500x240x100，中心 (350,0,-320)）
+    ' =================================================================
+    Dim bodyBat, bL, bW, bH
+    Set bodyBat = NewBody(part, "Battery")
+    bL = ParamValue(part, "BatteryLen")
+    bW = ParamValue(part, "BatteryWid")
+    bH = ParamValue(part, "BatteryHgt")
+    AddBox part, bodyBat, gs, "Battery", "Z", -320.0 - bH / 2.0, _
+           350.0 - bL / 2.0, -bW / 2.0, 350.0 + bL / 2.0, bW / 2.0, bH, False
+
+    ' =================================================================
+    ' 5) 电调 ESC（小箱 150x100x40，中心 (1300,0,140)）
+    ' =================================================================
+    Dim bodyEsc
+    Set bodyEsc = NewBody(part, "ESC")
+    AddBox part, bodyEsc, gs, "ESC", "Z", 120.0, _
+           1225.0, -50.0, 1375.0, 50.0, 40.0, False
+
+    part.Update
+
+    MsgBox "动力单元已生成：" & vbCrLf & _
+           "  Pylon —— 门式管架（2 竖管 + 横梁）" & vbCrLf & _
+           "  Motor —— 5kW 电机（φ" & CStr(CLng(motorD)) & " x " & CStr(CLng(motorL)) & "）" & vbCrLf & _
+           "  Propeller —— 折叠桨 Ø" & CStr(CLng(propD)) & "（2 片梯形桨叶）" & vbCrLf & _
+           "  Battery —— 3kWh 锂电箱  |  ESC —— 电调" & vbCrLf & _
+           "下一步：运行 05_人体支撑与约束接口.CATScript"
+End Sub
+
+' ---------------------------------------------------------------------
+' 通用：圆柱（实心或空心管），在 key 法向偏置 off 的平面上画圆，沿法向 Pad
+' key: "X"=YZ偏移(沿X) "Y"=ZX偏移(沿Y) "Z"=XY偏移(沿Z)
+' cx,cy 为草图坐标（对应该平面的 H,V 轴），len1 沿法向长度
+' ---------------------------------------------------------------------
+Sub AddCylinder(part, body, gs, name, key, off, cx, cy, rOut, rIn, len1, reverse)
+    Dim planeRef
+    Set planeRef = PlaneOffset(part, gs, key, off)
+    Dim sk
+    Set sk = body.Sketches.Add(planeRef)
+    sk.Name = name & "_sk"
+    SetAxisKey sk, key, off
+    Dim f2d
+    Set f2d = sk.OpenEdition()
+    f2d.CreateClosedCircle cx, cy, rOut
+    If rIn > 0.0 Then f2d.CreateClosedCircle cx, cy, rIn
+    sk.CloseEdition
+    part.InWorkObject = body
+    Dim pad
+    Set pad = part.ShapeFactory.AddNewPad(sk, len1)
+    pad.Name = name
+    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+End Sub
+
+' 通用：矩形盒（在 key 法向偏置 off 的平面上画矩形，沿法向 Pad）
+Sub AddBox(part, body, gs, name, key, off, u1, v1, u2, v2, len1, reverse)
+    Dim planeRef
+    Set planeRef = PlaneOffset(part, gs, key, off)
+    Dim sk
+    Set sk = body.Sketches.Add(planeRef)
+    sk.Name = name & "_sk"
+    SetAxisKey sk, key, off
+    Dim f2d
+    Set f2d = sk.OpenEdition()
+    f2d.CreateLine u1, v1, u2, v1
+    f2d.CreateLine u2, v1, u2, v2
+    f2d.CreateLine u2, v2, u1, v2
+    f2d.CreateLine u1, v2, u1, v1
+    sk.CloseEdition
+    part.InWorkObject = body
+    Dim pad
+    Set pad = part.ShapeFactory.AddNewPad(sk, len1)
+    pad.Name = name
+    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+End Sub
+
+' 通用：闭合多边形（uu()/vv() 为草图坐标）Pad
+Sub AddPolygonPad(part, body, gs, name, key, off, uu, vv, np, len1, reverse)
+    Dim planeRef
+    Set planeRef = PlaneOffset(part, gs, key, off)
+    Dim sk
+    Set sk = body.Sketches.Add(planeRef)
+    sk.Name = name & "_sk"
+    SetAxisKey sk, key, off
+    Dim f2d, i
+    Set f2d = sk.OpenEdition()
+    For i = 0 To np - 2
+        f2d.CreateLine uu(i), vv(i), uu(i + 1), vv(i + 1)
+    Next
+    f2d.CreateLine uu(np - 1), vv(np - 1), uu(0), vv(0)
+    sk.CloseEdition
+    part.InWorkObject = body
+    Dim pad
+    Set pad = part.ShapeFactory.AddNewPad(sk, len1)
+    pad.Name = name
+    If reverse Then pad.FirstLimit.Length = 0.0 : pad.SecondLimit.Length = len1
+End Sub
+
+' ---------------------------------------------------------------------
+' 基准面偏移：key "X"/"Y"/"Z" 沿对应轴偏移 off
+' ---------------------------------------------------------------------
+Function PlaneOffset(part, gs, key, off)
+    Static cnt
+    Dim hsf, refBase, po
+    cnt = cnt + 1
+    Set hsf = part.HybridShapeFactory
+    If key = "X" Then
+        Set refBase = part.CreateReferenceFromObject(part.OriginElements.PlaneYZ)
+    ElseIf key = "Z" Then
+        Set refBase = part.CreateReferenceFromObject(part.OriginElements.PlaneXY)
+    Else
+        Set refBase = part.CreateReferenceFromObject(part.OriginElements.PlaneZX)
+    End If
+    Set po = hsf.AddNewPlaneOffset(refBase, off, False)
+    po.Name = "Plane_" & key & "_" & cnt
+    gs.AppendHybridShape po
+    Set PlaneOffset = part.CreateReferenceFromObject(po)
+End Function
+
+' 设置草图绝对轴（原点在偏置平面上，H/V 沿全局轴）
+Sub SetAxisKey(sk, key, off)
+    If key = "X" Then
+        SetAxis sk, off, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0     ' H=Y V=Z
+    ElseIf key = "Z" Then
+        SetAxis sk, 0.0, 0.0, off, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0     ' H=X V=Y
+    Else
+        SetAxis sk, 0.0, off, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0     ' H=X V=Z
+    End If
+End Sub
+
+Sub SetAxis(sk, ox, oy, oz, hx, hy, hz, vx, vy, vz)
+    Dim a(8)
+    a(0) = ox : a(1) = oy : a(2) = oz
+    a(3) = hx : a(4) = hy : a(5) = hz
+    a(6) = vx : a(7) = vy : a(8) = vz
+    sk.SetAbsoluteAxisData a
+End Sub
+
+Function ParamValue(part, name)
+    Dim p
+    For Each p In part.Parameters
+        If p.Name = name Then
+            ParamValue = p.Value
+            Exit Function
+        End If
+    Next
+    ParamValue = 0.0
+End Function
+
+Sub EnsureParam(part, name, kind, val)
+    Dim p, exists
+    exists = False
+    For Each p In part.Parameters
+        If p.Name = name Then exists = True
+    Next
+    If Not exists Then
+        If kind = "LENGTH" Then
+            Set p = part.Parameters.CreateDimension("", "LENGTH", val)
+        Else
+            Set p = part.Parameters.CreateReal("", val)
+        End If
+        p.Rename name
+    End If
+End Sub
+
+Function AddGS(part, name)
+    Dim gs
+    Set gs = part.HybridBodies.Add()
+    gs.Name = name
+    Set AddGS = gs
+End Function
+
+Function NewBody(part, name)
+    Dim b
+    Set b = part.Bodies.Add()
+    b.Name = name
+    part.InWorkObject = b
+    Set NewBody = b
+End Function

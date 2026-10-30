@@ -1,0 +1,438 @@
+' =====================================================================
+' 02_结构件.CATScript  (CATIA V5, VBScript)
+' 在运行完 01_骨架与机翼外形（活动零件已有 Skeleton + WingSurface）后运行：
+'   1) 主梁 MainSpar   —— 空心盒梁（沿展向 4 段台阶变截面 200→125），左右
+'   2) 后梁 RearSpar   —— 空心盒梁（台阶变截面 80→50），左右
+'   3) 翼肋 Ribs       —— FX63-137 翼型截面多边形板（15 肋/侧，含根肋），左右
+'   4) 蒙皮 Skin       —— 机翼外形曲面（WingRightLoft+WingLeft）加厚 2mm
+'
+' 说明：盒梁按“外矩形 + 内矩形”双轮廓草图 Pad 得到空心壁（壁厚 WallThickness）。
+'       台阶变截面与 01_Theory/04“缘条 8→6→4→2mm 台阶递减”一致。
+'       翼梁中心对齐翼型中厚线（30%弦处 mid=0.051c / 65%弦处 mid=0.0232c），
+'       以保证盒梁完全落在翼型内（见 scripts/verify_geometry.py 自检）。
+' 修复：偏置面先更新；拉伸按草图法向定向；左右蒙皮分体更新。
+' =====================================================================
+Sub CATMain()
+    Dim part
+    Set part = CATIA.ActiveDocument.Part
+
+    ' Do not stack a second run on top of a partial/complete structure build.
+    Dim existingBody
+    For Each existingBody In part.Bodies
+        If existingBody.Name = "MainSpar" Or existingBody.Name = "RearSpar" Or _
+           existingBody.Name = "Ribs" Or existingBody.Name = "Skin" Or _
+           existingBody.Name = "SkinLeftBody" Then
+            MsgBox "当前零件已含结构件或上次失败的残留。请重新打开运行 02 前保存的 Part6.CATPart，再运行本宏。"
+            Exit Sub
+        End If
+    Next
+
+    ' Validate the data file before changing the model.
+    Dim dataFile
+    dataFile = AirfoilFile()
+
+    ' ---- 补充参数（若 01 未建则新建；已存在则保留）----
+    EnsureParam part, "RearSparDepthRoot", "LENGTH", 80.0
+    EnsureParam part, "RearSparWidth",      "LENGTH", 30.0
+    EnsureParam part, "WallThickness",      "LENGTH", 3.0
+    EnsureParam part, "SparCamber",         "REAL",   0.051
+    EnsureParam part, "RearSparCamber",     "REAL",   0.0232
+
+    Dim rootChord, tipChord, halfSpan, dihedralDeg, washoutDeg, ribSpacing
+    Dim sparPos, rearPos, sparDepth, sparWidth, rearDepth, rearWidth, wall
+    Dim sparCam, rearCam, ribThk, skinThk
+    rootChord  = ParamValue(part, "RootChord")
+    tipChord   = ParamValue(part, "TipChord")
+    halfSpan   = ParamValue(part, "WingSpan") / 2.0
+    dihedralDeg= ParamValue(part, "Dihedral")
+    washoutDeg = ParamValue(part, "Washout")
+    ribSpacing = ParamValue(part, "RibSpacing")
+    sparPos    = ParamValue(part, "SparChordPos")
+    rearPos    = ParamValue(part, "RearSparChordPos")
+    sparDepth  = ParamValue(part, "SparDepthRoot")
+    sparWidth  = ParamValue(part, "SparWidth")
+    rearDepth  = ParamValue(part, "RearSparDepthRoot")
+    rearWidth  = ParamValue(part, "RearSparWidth")
+    wall       = ParamValue(part, "WallThickness")
+    sparCam    = ParamValue(part, "SparCamber")
+    rearCam    = ParamValue(part, "RearSparCamber")
+    ribThk     = ParamValue(part, "RibThickness")
+    skinThk    = ParamValue(part, "SkinThickness")
+
+    ' ---- 引用 01 生成的外形曲面 ----
+    Dim wingRight, wingLeft
+    Set wingRight = FindShape(part, "WingSurface", "WingRightLoft")
+    Set wingLeft  = FindShape(part, "WingSurface", "WingLeft")
+    If wingRight Is Nothing Then
+        MsgBox "未找到 WingRightLoft，请先运行 01_骨架与机翼外形.CATScript。"
+        Exit Sub
+    End If
+
+    ' ---- 构造几何集（临时基准面）----
+    Dim gsCons
+    Set gsCons = AddGS(part, "Construction")
+
+    ' =================================================================
+    ' 1) 主梁 MainSpar（空心盒梁，左右两侧，4 段台阶）
+    ' =================================================================
+    Dim bodySpar
+    Set bodySpar = NewBody(part, "MainSpar")
+    BuildSteppedSpar part, bodySpar, gsCons, "MainSpar", sparPos, sparCam, _
+                     sparWidth, sparDepth, wall, False
+    BuildSteppedSpar part, bodySpar, gsCons, "MainSpar", sparPos, sparCam, _
+                     sparWidth, sparDepth, wall, True
+
+    ' =================================================================
+    ' 2) 后梁 RearSpar
+    ' =================================================================
+    Dim bodyRear
+    Set bodyRear = NewBody(part, "RearSpar")
+    BuildSteppedSpar part, bodyRear, gsCons, "RearSpar", rearPos, rearCam, _
+                     rearWidth, rearDepth, wall, False
+    BuildSteppedSpar part, bodyRear, gsCons, "RearSpar", rearPos, rearCam, _
+                     rearWidth, rearDepth, wall, True
+
+    ' =================================================================
+    ' 3) 翼肋 Ribs（15 肋/侧：y=0,450,...,6300，含根肋）
+    ' =================================================================
+    Dim bodyRib
+    Set bodyRib = NewBody(part, "Ribs")
+    BuildRibs part, bodyRib, gsCons, ribSpacing, ribThk, False
+    BuildRibs part, bodyRib, gsCons, ribSpacing, ribThk, True
+
+    ' =================================================================
+    ' 4) 蒙皮 Skin（右翼+左翼曲面加厚 2mm）
+    ' =================================================================
+    Dim bodySkin, bodySkinLeft
+    Set bodySkin = NewBody(part, "Skin")
+    part.InWorkObject = bodySkin
+    Dim th1, th2
+    Set th1 = part.ShapeFactory.AddNewThickSurface(RefOf(part, wingRight), 1, skinThk/2.0, skinThk/2.0)
+    th1.Name = "SkinRight"
+    part.UpdateObject th1
+    If Not wingLeft Is Nothing Then
+        ' Keep mirrored skins independent: their root seam cannot be fused reliably.
+        Set bodySkinLeft = NewBody(part, "SkinLeftBody")
+        Set th2 = part.ShapeFactory.AddNewThickSurface(RefOf(part, wingLeft), 1, skinThk/2.0, skinThk/2.0)
+        th2.Name = "SkinLeft"
+        part.UpdateObject th2
+    End If
+
+    part.Update
+
+    MsgBox "翼面结构件已生成：" & vbCrLf & _
+           "  MainSpar / RearSpar —— 空心盒梁（左右，台阶变截面）" & vbCrLf & _
+           "  Ribs —— FX63-137 翼型截面板（15 肋/侧 x 左右）" & vbCrLf & _
+           "  Skin —— 蒙皮（ThickSurface 2mm）" & vbCrLf & _
+           "下一步：运行 03_中央承力框架与连接件.CATScript"
+End Sub
+
+' ---------------------------------------------------------------------
+' 在右半翼(或左半翼)构建一根台阶变截面空心盒梁
+' chordPos: 弦向站位(0.30/0.65)  camber: 中厚线系数  width/depthRoot: 截面
+' wall: 壁厚  reverse: True 表示建在左半翼(y<0)
+' ---------------------------------------------------------------------
+Sub BuildSteppedSpar(part, body, gs, prefix, chordPos, camber, width, depthRoot, wall, reverse)
+    Dim segY(4)
+    segY(0) = 0.0 : segY(1) = 1625.0 : segY(2) = 3250.0 : segY(3) = 4875.0 : segY(4) = 6500.0
+
+    Dim rootChord, tipChord, halfSpan, dihedralDeg
+    rootChord   = ParamValue(part, "RootChord")
+    tipChord    = ParamValue(part, "TipChord")
+    halfSpan    = ParamValue(part, "WingSpan") / 2.0
+    dihedralDeg = ParamValue(part, "Dihedral")
+
+    Dim i, y0, y1, midY, c, xc, zc, d, len, planeY
+    Dim sgn, sideTag
+    If reverse Then sgn = -1.0 Else sgn = 1.0
+    If reverse Then sideTag = "L" Else sideTag = "R"
+
+    For i = 0 To 3
+        y0 = segY(i)
+        y1 = segY(i + 1)
+        midY = (y0 + y1) / 2.0
+        c = ChordAt(rootChord, tipChord, halfSpan, midY)
+        xc = chordPos * c
+        zc = camber * c + DihedralLift(midY, dihedralDeg)
+        d  = depthRoot * (c / rootChord)
+        len = y1 - y0
+        planeY = sgn * y0
+        AddHollowBox part, body, gs, prefix & "_" & sideTag & "_seg" & i, planeY, xc, zc, width, d, wall, len, reverse
+    Next
+End Sub
+
+' ---------------------------------------------------------------------
+' 构建左右半翼全部翼肋（FX63-137 缩放 + 洗流 + 上反）
+' ---------------------------------------------------------------------
+Sub BuildRibs(part, body, gs, spacing, thk, reverse)
+    Dim ax(), ay()
+    Dim n
+    ReadAirfoil ax, ay, n
+
+    Dim rootChord, tipChord, halfSpan, dihedralDeg, washoutDeg
+    rootChord   = ParamValue(part, "RootChord")
+    tipChord    = ParamValue(part, "TipChord")
+    halfSpan    = ParamValue(part, "WingSpan") / 2.0
+    dihedralDeg = ParamValue(part, "Dihedral")
+    washoutDeg  = ParamValue(part, "Washout")
+
+    Dim sgn, sideTag
+    If reverse Then sgn = -1.0 Else sgn = 1.0
+    If reverse Then sideTag = "L" Else sideTag = "R"
+
+    ' 根肋 y=0 + 14 肋（450..6300）
+    Dim y, k
+    y = 0.0
+    Do While y <= 6300.0
+        AddRib part, body, gs, "Rib" & sideTag & "_y" & CStr(CLng(y)), y * sgn, ax, ay, n, _
+               rootChord, tipChord, halfSpan, dihedralDeg, washoutDeg, thk, reverse
+        If y = 0.0 Then
+            y = spacing
+        Else
+            y = y + spacing
+        End If
+    Loop
+End Sub
+
+' 单块翼肋（翼型多边形草图 + Pad 3mm）
+Sub AddRib(part, body, gs, name, y, ax, ay, n, rootChord, tipChord, halfSpan, dihedralDeg, washoutDeg, thk, reverse)
+    Dim c, zd, th
+    c  = ChordAt(rootChord, tipChord, halfSpan, Abs(y))
+    zd = DihedralLift(Abs(y), dihedralDeg)
+    th = washoutDeg * (Abs(y) / halfSpan)   ' 洗流角，随展向线性
+    Dim cosT, sinT
+    cosT = Cos(Rad(th)) : sinT = Sin(Rad(th))
+
+    Dim planeRef
+    Set planeRef = PlaneAtY(part, gs, y)
+
+    Dim sk
+    part.InWorkObject = body
+    Set sk = body.Sketches.Add(planeRef)
+    sk.Name = name & "_sk"
+    SetAxisZ sk, 0.0, y, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0
+
+    Dim f2d, i, xn, yn, x0, z0, X1, Z1, px(), pz()
+    Set f2d = sk.OpenEdition()
+    ReDim px(n - 1), pz(n - 1)
+    For i = 0 To n - 1
+        xn = ax(i) : yn = ay(i)
+        x0 = xn * c
+        z0 = yn * c
+        X1 = x0 * cosT + z0 * sinT
+        Z1 = -x0 * sinT + z0 * cosT + zd
+        px(i) = X1
+        pz(i) = Z1
+    Next
+    ' 逐点连线成多边形（含闭合边：末点->首点）
+    Dim RIB_SKIP
+    RIB_SKIP = 2
+    Dim prev, first, idx, started
+    started = False
+    idx = 0
+    Do While idx < n
+        If Not started Then
+            first = idx
+            prev = idx
+            started = True
+        Else
+            f2d.CreateLine px(prev), pz(prev), px(idx), pz(idx)
+            prev = idx
+        End If
+        idx = idx + RIB_SKIP
+    Loop
+    ' 收尾：连到末点再闭合回首点
+    If prev <> n - 1 Then
+        f2d.CreateLine px(prev), pz(prev), px(n - 1), pz(n - 1)
+    End If
+    If Abs(px(n - 1) - px(0)) + Abs(pz(n - 1) - pz(0)) > 0.000001 Then
+        f2d.CreateLine px(n - 1), pz(n - 1), px(0), pz(0)
+    End If
+    sk.CloseEdition
+
+    part.InWorkObject = body
+    Dim pad
+    Set pad = part.ShapeFactory.AddNewPad(sk, thk)
+    pad.Name = name
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
+End Sub
+
+' ---------------------------------------------------------------------
+' 空心盒段：外矩形+内矩形双轮廓草图 Pad（壁厚 wall）
+' 草图在常 Y 平面(planeY)上，截面中心 (xc,zc)，截面 w x d，沿 Y Pad len
+' ---------------------------------------------------------------------
+Sub AddHollowBox(part, body, gs, name, planeY, xc, zc, w, d, wall, len, reverse)
+    Dim planeRef
+    Set planeRef = PlaneAtY(part, gs, planeY)
+
+    Dim sk
+    part.InWorkObject = body
+    Set sk = body.Sketches.Add(planeRef)
+    sk.Name = name & "_sk"
+    SetAxisZ sk, 0.0, planeY, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0
+
+    Dim f2d
+    Set f2d = sk.OpenEdition()
+    Dim xo1, xo2, zo1, zo2, xi1, xi2, zi1, zi2
+    xo1 = xc - w / 2.0 : xo2 = xc + w / 2.0
+    zo1 = zc - d / 2.0 : zo2 = zc + d / 2.0
+    xi1 = xc - (w / 2.0 - wall) : xi2 = xc + (w / 2.0 - wall)
+    zi1 = zc - (d / 2.0 - wall) : zi2 = zc + (d / 2.0 - wall)
+    f2d.CreateLine xo1, zo1, xo2, zo1
+    f2d.CreateLine xo2, zo1, xo2, zo2
+    f2d.CreateLine xo2, zo2, xo1, zo2
+    f2d.CreateLine xo1, zo2, xo1, zo1
+    f2d.CreateLine xi1, zi1, xi2, zi1
+    f2d.CreateLine xi2, zi1, xi2, zi2
+    f2d.CreateLine xi2, zi2, xi1, zi2
+    f2d.CreateLine xi1, zi2, xi1, zi1
+    sk.CloseEdition
+
+    part.InWorkObject = body
+    Dim pad
+    Set pad = part.ShapeFactory.AddNewPad(sk, len)
+    pad.Name = name
+    If Not reverse Then pad.DirectionOrientation = 1
+    part.UpdateObject pad
+End Sub
+
+' ---------------------------------------------------------------------
+' 通用小工具
+' ---------------------------------------------------------------------
+Function ChordAt(cr, ct, hs, y)
+    ChordAt = cr - (cr - ct) * (y / hs)
+End Function
+
+Function DihedralLift(y, dihedralDeg)
+    DihedralLift = y * Tan(Rad(dihedralDeg))
+End Function
+
+Function Rad(deg)
+    Rad = deg * 3.14159265358979 / 180.0
+End Function
+
+' 常 Y 平面的基准面（y=0 即 zx 平面，否则偏移）
+Function PlaneAtY(part, gs, y)
+    Dim hsf, refZX, po
+    Set hsf = part.HybridShapeFactory
+    If Abs(y) < 0.001 Then
+        Set PlaneAtY = part.CreateReferenceFromObject(part.OriginElements.PlaneZX)
+        Exit Function
+    End If
+    Set refZX = part.CreateReferenceFromObject(part.OriginElements.PlaneZX)
+    Set po = hsf.AddNewPlaneOffset(refZX, y, False)
+    po.Name = "Plane_y" & CStr(CLng(y))
+    gs.AppendHybridShape po
+    ' CATIA V5 requires a computed support before Sketches.Add.
+    part.UpdateObject po
+    Set PlaneAtY = part.CreateReferenceFromObject(po)
+End Function
+
+' 设置草图绝对轴：原点 + H 方向 + V 方向（常 Y 平面：H=X, V=Z）
+Sub SetAxisZ(sk, ox, oy, oz, hx, hy, hz, vx, vy, vz)
+    Dim a(8)
+    a(0) = ox : a(1) = oy : a(2) = oz
+    a(3) = hx : a(4) = hy : a(5) = hz
+    a(6) = vx : a(7) = vy : a(8) = vz
+    sk.SetAbsoluteAxisData a
+End Sub
+
+Sub ReadAirfoil(ax, ay, n)
+    Dim fso, ts, line, arr, cnt, DATA_DIR
+    ReDim ax(500) : ReDim ay(500)     ' 定长数组（FX63-137 共 96 点，500 足够）
+    Set fso = CreateObject("Scripting.FileSystemObject")
+    Set ts = fso.OpenTextFile(AirfoilFile(), 1)
+    ts.ReadLine
+    cnt = 0
+    Do While Not ts.AtEndOfStream
+        line = Trim(ts.ReadLine)
+        If Len(line) > 0 Then
+            arr = Split(line, ",")
+            ax(cnt) = CDbl(arr(0))
+            ay(cnt) = CDbl(arr(1))
+            cnt = cnt + 1
+        End If
+    Loop
+    ts.Close
+    n = cnt
+End Sub
+
+Function ParamValue(part, name)
+    Dim p
+    For Each p In part.Parameters
+        If p.Name = name Then
+            ParamValue = p.Value
+            Exit Function
+        End If
+    Next
+    ParamValue = 0.0
+End Function
+
+Sub EnsureParam(part, name, kind, val)
+    Dim p, exists
+    exists = False
+    For Each p In part.Parameters
+        If p.Name = name Then exists = True
+    Next
+    If Not exists Then
+        If kind = "LENGTH" Then
+            Set p = part.Parameters.CreateDimension("", "LENGTH", val)
+        Else
+            Set p = part.Parameters.CreateReal("", val)
+        End If
+        p.Rename name
+    End If
+End Sub
+
+Function AddGS(part, name)
+    Dim gs
+    Set gs = part.HybridBodies.Add()
+    gs.Name = name
+    Set AddGS = gs
+End Function
+
+Function NewBody(part, name)
+    Dim b
+    Set b = part.Bodies.Add()
+    b.Name = name
+    part.InWorkObject = b
+    Set NewBody = b
+End Function
+
+Function FindShape(part, bodyName, shapeName)
+    Dim hb, sh
+    For Each hb In part.HybridBodies
+        If hb.Name = bodyName Then
+            For Each sh In hb.HybridShapes
+                If sh.Name = shapeName Then
+                    Set FindShape = sh
+                    Exit Function
+                End If
+            Next
+        End If
+    Next
+    Set FindShape = Nothing
+End Function
+
+Function RefOf(part, obj)
+    Set RefOf = part.CreateReferenceFromObject(obj)
+End Function
+
+' Resolve airfoil data relative to the saved CATPart, not another PC's path.
+Function AirfoilFile()
+    Dim fs, folder, candidate, i
+    Set fs = CreateObject("Scripting.FileSystemObject")
+    folder = CATIA.ActiveDocument.Path
+    For i = 0 To 2
+        If Len(folder) > 0 Then
+            candidate = fs.BuildPath(folder, "airfoil\fx63137_loop.csv")
+            If fs.FileExists(candidate) Then
+                AirfoilFile = candidate
+                Exit Function
+            End If
+            folder = fs.GetParentFolderName(folder)
+        End If
+    Next
+    Err.Raise 513, "AirfoilFile", "未找到 airfoil\fx63137_loop.csv，请先将零件保存在本项目的 02_CATIA 或其 CATIA 子目录。"
+End Function
