@@ -57,5 +57,3 @@
 - **仿真**：`03_FEA/scripts/*.py`（Python 3.12 + numpy + python-docx + Pillow + gmsh 4.15.2）；
 - **建模**：CATIA V5R21（`02_CATIA/PersonalAircraft_Structural_RevP.CATPart`）；
 - **文档 / 汇报**：Word / PowerPoint（报告、汇报 PPT）。
-
-> 说明：本作业使用了 AI 辅助工具（Claude）进行设计分析、数值脚本与文档草拟，具体范围与责任划分见 [`06_AI_Statment/AI使用声明.md`](06_AI_Statment/AI使用声明.md)。
