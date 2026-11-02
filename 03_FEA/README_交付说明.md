@@ -10,10 +10,10 @@
 | 目录 | 内容 |
 |---|---|
 | `*.docx` | 分析报告（汇总版 + 两份分册） |
-| `mesh/` | 两版表面网格（STL / gmsh msh）+ 重建的机翼气动外形 |
 | `results/` | 全部数值结果（极曲线、展向载荷、弯矩/应力/挠度） |
 | `figures/` | 报告用图（网格视图、极曲线、展向载荷、Cp 云图、应力云图） |
-| `scripts/` | 生成以上全部结果的 Python 脚本 |
+
+> **未随仓库公开的内容**：网格中间文件（`mesh/`，STL 与 gmsh msh，共约 173 MB）与生成全部结果的 Python 脚本（AI 辅助编写）由小组成员本地保留，本文档中列出其统计参数与清单以备溯源；如需文件原件可向第十二小组索取。
 
 ### 1.1 报告（三份，各自独立）
 
@@ -23,7 +23,7 @@
 | `02_应力分析报告_RevN.docx` | 6g 载荷、梁模型、主梁应力云图与挠度 | 约 5 页，2 图 3 表 |
 | `03_气动仿真报告_RevP.docx` | 升力线方法、极曲线、展向载荷、Cp 云图 | 约 6 页，6 图 2 表 |
 
-### 1.2 网格
+### 1.2 网格（本地保留，未随仓库公开）
 
 | 文件 | 大小 | 说明 |
 |---|---|---|
@@ -60,7 +60,7 @@
 | `figures/spar_stress_iso.png` | 主梁 von Mises 应力云图 |
 | `figures/strength.png` | 缘条应力与挠度沿展向 |
 
-### 1.5 脚本（按编号顺序执行）
+### 1.5 脚本（AI 辅助编写，本地保留，未随仓库公开；按编号顺序执行）
 
 ```
 01_inspect.py      STEP 体检（实体包围盒、面积）
@@ -104,8 +104,9 @@ build_full_report.py / build_report_revP.py / build_report.py  生成 docx
 - **云图**：Cp 与 von Mises 都是上述解析场映射到网格逐面着色，颜色代表物理量，但分辨率受解析模型限制。
 - 本机无可用 CFD/Fea 求解器（ANSYS 仅 Motion；STAR-CCM+ 缺 `starccm+.exe`），故未做 RANS/三维 FEA。
 
-需要更真实的结果时：把 `mesh/revP_surface.stl` 导入有许可证的 STAR-CCM+/Fluent 跑 RANS；
-把 `aircraft_surface_bin.stl` 导入 Abaqus/ANSYS 抽中面 + 铺层做壳单元 FEA。
+需要更真实的结果时：把 RevP 完整外形网格（`revP_surface.stl`）导入有许可证的 STAR-CCM+/Fluent 跑 RANS；
+把 RevN 结构网格（`aircraft_surface_bin.stl`）导入 Abaqus/ANSYS 抽中面 + 铺层做壳单元 FEA。
+上述网格文件由小组本地保留，可向第十二小组索取。
 
 ---
 

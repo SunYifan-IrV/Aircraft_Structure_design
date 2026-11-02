@@ -14,7 +14,7 @@
 | [`00_Requirments`](00_Requirments/) | 设计需求冻结 | 设计需求、质量预算、载荷工况 |
 | [`01_Theory`](01_Theory/) | 理论设计 | 总体参数、翼型/速度、升力分布/翼根内力、翼面结构、中央承力框架 |
 | [`02_CATIA`](02_CATIA/) | 三维建模 | 设计思路、逐部件尺寸规格、CATPart |
-| [`03_FEA`](03_FEA/) | 仿真分析 | 网格/应力/气动报告、脚本、结果、图件 |
+| [`03_FEA`](03_FEA/) | 仿真分析 | 网格/应力/气动报告、数值结果、图件 |
 | [`04_Report`](04_Report/) | 分析报告 | 汇总报告（docx）与补充章节 |
 | [`05_Presentation`](05_Presentation/) | 答辩汇报 | 汇报 PPT 与逐页讲稿 |
 | [`06_AI_Statment`](06_AI_Statment/) | AI 使用说明 | AI 使用声明 |
@@ -53,7 +53,9 @@
 
 ## 工具与可复现性
 
-- **理论计算**：`01_Theory/scripts/calc_wing.py` —— 全部数值可复现，改动参数后重跑即更新；
-- **仿真**：`03_FEA/scripts/*.py`（Python 3.12 + numpy + python-docx + Pillow + gmsh 4.15.2）；
+- **理论计算**：AI 辅助编写的 Python 脚本 `calc_wing.py` —— 全部数值可复现，改动参数后重跑即更新；
+- **仿真**：Python 3.12 + numpy + python-docx + Pillow + gmsh 4.15.2，网格划分、升力线气动与梁模型强度计算均由脚本完成；
 - **建模**：CATIA V5R21（`02_CATIA/PersonalAircraft_Structural_RevP.CATPart`）；
 - **文档 / 汇报**：Word / PowerPoint（报告、汇报 PPT）。
+
+> **关于脚本与网格的公开范围**：本仓库只公开设计文档、分析报告、图件与数值结果数据。AI 辅助编写的计算脚本、网格中间文件与交付压缩包由小组成员本地保留，未随仓库公开；如需查阅脚本原件或复现计算过程，可向第十二小组索取，详见 [`06_AI_Statment/AI使用声明.md`](06_AI_Statment/AI使用声明.md)。

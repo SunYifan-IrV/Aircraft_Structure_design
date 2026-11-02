@@ -6,3 +6,16 @@ package-lock.json
 Thumbs.db
 Desktop.ini
 .DS_Store
+
+# 本地保留、不随仓库公开：AI 辅助脚本与中间产物
+01_Theory/scripts/
+03_FEA/scripts/
+05_Presentation/build_ppt.js
+05_Presentation/make_detailed_ppt.py
+05_Presentation/package.json
+
+# 网格中间文件（体积大，报告与图件已含结论）
+03_FEA/mesh/
+
+# 交付包压缩包（内容与仓库内报告/图件/结果重复）
+03_FEA/*.zip
