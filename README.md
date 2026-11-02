@@ -15,8 +15,8 @@
 | [`01_Theory`](01_Theory/) | 理论设计 | 总体参数、翼型/速度、升力分布/翼根内力、翼面结构、中央承力框架 |
 | [`02_CATIA`](02_CATIA/) | 三维建模 | 设计思路、逐部件尺寸规格、CATPart |
 | [`03_FEA`](03_FEA/) | 仿真分析 | 网格/应力/气动报告、数值结果、图件 |
-| [`04_Report`](04_Report/) | 分析报告 | 汇总报告（docx）与补充章节 |
-| [`05_Presentation`](05_Presentation/) | 答辩汇报 | 汇报 PPT 与逐页讲稿 |
+| [`04_Report`](04_Report/) | 分析报告 | 汇总报告（docx） |
+| [`05_Presentation`](05_Presentation/) | 答辩汇报 | 汇报 PPT |
 | [`06_AI_Statment`](06_AI_Statment/) | AI 使用说明 | AI 使用声明 |
 
 ## 设计一页摘要
@@ -47,8 +47,8 @@
 - 理论总览：`01_Theory/00_理论设计总览.md`
 - 建模思路：`02_CATIA/00_设计思路.md`；逐部件尺寸：`02_CATIA/02_详细设计描述.md`
 - 仿真交付：`03_FEA/README_交付说明.md`
-- 汇总报告：`04_Report/分析报告.docx`（补充章节见 `04_Report/00_报告补充章节.md`）
-- 答辩汇报：`05_Presentation/飞行器结构设计报告.pptx`（逐页讲稿见 `05_Presentation/README.md`）
+- 汇总报告：`04_Report/分析报告.docx`
+- 答辩汇报：`05_Presentation/飞行器结构设计报告.pptx`
 - AI 使用声明：`06_AI_Statment/AI使用声明.md`
 
 ## 工具与可复现性
