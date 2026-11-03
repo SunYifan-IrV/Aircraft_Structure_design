@@ -57,5 +57,3 @@
 - **仿真**：Python 3.12 + numpy + python-docx + Pillow + gmsh 4.15.2，网格划分、升力线气动与梁模型强度计算均由脚本完成；
 - **建模**：CATIA V5R21（`02_CATIA/PersonalAircraft_Structural_RevP.CATPart`）；
 - **文档 / 汇报**：Word / PowerPoint（报告、汇报 PPT）。
-
-> **关于脚本与网格的公开范围**：本仓库只公开设计文档、分析报告、图件与数值结果数据。AI 辅助编写的计算脚本、网格中间文件与交付压缩包由小组成员本地保留，未随仓库公开；如需查阅脚本原件或复现计算过程，可向第十二小组索取，详见 [`06_AI_Statment/AI使用声明.md`](06_AI_Statment/AI使用声明.md)。
